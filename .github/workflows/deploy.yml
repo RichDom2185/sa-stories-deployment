@@ -55,6 +55,10 @@ jobs:
           # See https://github.com/ad-m/github-push-action for rationale
           persist-credentials: false
           fetch-depth: 0
+      - name: Remove GitHub-related files
+        run: |
+          cd ${{ env.SUBMODULE_DIRECTORY }}
+          rm -rf .github
       - name: Setup Git identity
         id: git-identity
         run: |
