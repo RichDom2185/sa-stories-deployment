@@ -1,0 +1,78 @@
+name: Refresh deployment
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+  schedule:
+    # Run thrice each hour
+    - cron: "*/20 * * * *"
+
+env:
+  SUBMODULE_DIRECTORY: backend
+  TARGET_BRANCH: deploy
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    outputs:
+      has_changes: ${{ steps.changes.outputs.has_changes }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          ref: main
+          submodules: recursive
+          # Allow for merging by comparing histories
+          fetch-depth: 0
+      - name: Pull latest submodules
+        id: changes
+        run: |
+          git submodule update --remote --merge
+          if [[ $(git status --porcelain) ]]; then
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Commit changes
+        if: ${{ steps.changes.outputs.has_changes == 'true' }}
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git commit -a -m "Update submodules"
+          git push
+  deploy:
+    needs: refresh
+    runs-on: ubuntu-latest
+    if: ${{ needs.refresh.outputs.has_changes == 'true' || github.event_name == 'workflow_dispatch' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          ref: main
+          submodules: recursive
+          # See https://github.com/ad-m/github-push-action for rationale
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Setup Git identity
+        id: git-identity
+        run: |
+          cd ${{ env.SUBMODULE_DIRECTORY }}
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          echo "LAST_COMMIT_SHA=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Commit changes
+        run: |
+          cd ${{ env.SUBMODULE_DIRECTORY }}
+          git checkout -b TEMP
+          git add .
+          git commit --allow-empty -a -m "deploy: ${{ steps.git-identity.outputs.LAST_COMMIT_SHA }}"
+      - name: Deploy
+        uses: ad-m/github-push-action@master
+        with:
+          force: true
+          directory: ${{ env.SUBMODULE_DIRECTORY }}
+          repository: ${{ github.repository }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          branch: ${{ env.TARGET_BRANCH }}
